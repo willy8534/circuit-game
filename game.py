@@ -12,7 +12,7 @@ hold-to-glide cursor, hold CENTER to paint floors and walls, buy-as-you-place.
 
 NEW IN 15.0: slide pot wired like the real kit (pin 1 power, pin 2 output, pin 3 ground), simpler circuits,
 decorating can remove room objects, walls + floors, 200+ furniture pieces incl. kitchen/bedroom/bath/living.
-
+ 
 NEW IN 14.0: every circuit checked against real 5V physics, Gio's tips say exactly where each leg goes
 (series explained properly), full explanations only the first time, workbench follows real-world rules.
 
