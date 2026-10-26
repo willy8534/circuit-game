@@ -68,7 +68,9 @@ const LS_KEY = "gio_save";
 const $ = id => document.getElementById(id);
 const step = (txt, pct) => { $("msg").textContent = txt; $("bar").style.width = pct + "%"; };
 const syncMsg = t => { $("sync").textContent = t; };
-const savedAt = t => { try { return JSON.parse(t).saved_at || 0; } catch (e) { return -1; } };
+// which save is "ahead": the one with more play time (where she actually played), then the newest
+const rank = t => { try { const d = JSON.parse(t); return [d.play || 0, d.saved_at || 0]; } catch (e) { return [-1, -1]; } };
+const ahead = (a, b) => { const x = rank(a), y = rank(b); return x[0] !== y[0] ? x[0] > y[0] : x[1] >= y[1]; };
 const store = {
   get() { try { return localStorage.getItem(LS_KEY); } catch (e) { return null; } },
   set(t) { try { localStorage.setItem(LS_KEY, t); return true; } catch (e) { return false; } },
@@ -175,10 +177,10 @@ async function boot() {
     step("Getting your progress...", 85);
     const local = store.get(), remote = await piSave();
     let save = local;
-    if (remote && (!local || savedAt(remote) >= savedAt(local))) save = remote;   // newest save wins
+    if (remote && (!local || ahead(remote, local))) save = remote;   // the save she's played more on wins
     py.FS.mkdirTree("/home/jasyne/circuits");
     if (save) { py.FS.writeFile("/home/jasyne/circuits/progress.json", save); store.set(save); }
-    if (local && remote !== null && local === save && savedAt(local) > savedAt(remote || "{}")) {
+    if (local && remote !== null && local === save && (!remote || !ahead(remote, local))) {
       pending = local; flush();   // she played on the phone while the game box was off: send it now
     }
     await py.runPythonAsync(BOOT);
