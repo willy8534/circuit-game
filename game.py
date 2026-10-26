@@ -619,8 +619,8 @@ loop();
 
 def save_rank(d):
     """How far along a save is - used to pick between the phone's save and the Pi's."""
-    return (len(d.get("done", [])), int(d.get("quests_done", 0) or 0), int(d.get("earned", 0) or 0),
-            float(d.get("play", 0) or 0), float(d.get("saved_at", 0) or 0))
+    return (float(d.get("started_at", 0) or 0), len(d.get("done", [])), int(d.get("quests_done", 0) or 0),
+            int(d.get("earned", 0) or 0), float(d.get("play", 0) or 0), float(d.get("saved_at", 0) or 0))
 
 
 def web_held(name):
@@ -695,7 +695,8 @@ def web_start():
                     try:
                         with open(PROGRESS_FILE) as f:
                             cur = f.read()
-                        # keep whichever save is further ahead: story quests, then jobs, then Bolts ever earned,
+                        # keep whichever save is further ahead: the newer playthrough (NEW GAME), then story quests,
+                        # then jobs, then Bolts ever earned,
                         # then play time, then newest. (Time alone lost progress: an empty Pi save looked "newer",
                         # and play time alone grows while the Pi just sits switched on.)
                         if save_rank(json.loads(cur)) > save_rank(incoming):
@@ -4561,7 +4562,8 @@ EXTRA_DEFAULTS = dict(sb=None, job_seed=None, jobs_done=0, built_ok=False, decor
                       last_day="", streak=0, week_id="", week_goal=0, week_base=0, week_done=False, weeks_done=0,
                       events_bought=0, tut=None, tut_done=False, removed=[], recent=[], sound="on",
                       vol_all=6, vol_music=8, vol_fx=5, vol_voice=6, side_done=[],
-                      quest_seed=None, quest_recent=[], quests_done=0, quest_stories=[])
+                      quest_seed=None, quest_recent=[], quests_done=0, quest_stories=[],
+                      started_at=0)   # when this playthrough began: a NEW GAME beats any older game when syncing
 
 
 def extra_defaults():
@@ -5093,6 +5095,8 @@ class Game:
         self.sb = [[None] * SB_COLS for _ in range(SB_ROWS)]
         self.daily_checked = False
         self.removed_set = set()
+        self.started_at = round(time.time(), 1)   # brand-new playthrough
+        self.save()   # so her phone sees the new game straight away
 
         def arrive():
             self.tut = 0   # lights on, staff in place, Gio tagging along
