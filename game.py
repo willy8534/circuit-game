@@ -12,7 +12,7 @@ hold-to-glide cursor, hold CENTER to paint floors and walls, buy-as-you-place.
 
 NEW IN 15.0: slide pot wired like the real kit (pin 1 power, pin 2 output, pin 3 ground), simpler circuits,
 decorating can remove room objects, walls + floors, 200+ furniture pieces incl. kitchen/bedroom/bath/living.
- 
+
 NEW IN 14.0: every circuit checked against real 5V physics, Gio's tips say exactly where each leg goes
 (series explained properly), full explanations only the first time, workbench follows real-world rules.
 
@@ -685,11 +685,14 @@ def web_start():
                 n = int(self.headers.get("Content-Length", 0) or 0)
                 body = self.rfile.read(min(n, 2_000_000))
                 try:
-                    new_at = float(json.loads(body.decode("utf-8")).get("saved_at", 0))
+                    incoming = json.loads(body.decode("utf-8"))
                     try:
                         with open(PROGRESS_FILE) as f:
                             cur = f.read()
-                        if float(json.loads(cur).get("saved_at", 0)) > new_at:   # the Pi's save is newer: keep it
+                        # keep whichever save has MORE play time (= where she actually played); ties go to the newest.
+                        # Going by time alone lost progress: a fresh, empty save made on the Pi looked "newer".
+                        old = json.loads(cur)
+                        if (float(old.get("play", 0)), float(old.get("saved_at", 0))) >                                 (float(incoming.get("play", 0)), float(incoming.get("saved_at", 0))):
                             self._send(409, cur.encode("utf-8"), "application/json")
                             return
                     except (OSError, ValueError):
