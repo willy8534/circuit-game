@@ -104,8 +104,19 @@ async function flush() {
   const txt = pending; pending = null;
   try {
     const r = await fetch(PI + "/save", {method: "POST", body: txt, headers: {"Content-Type": "text/plain"}, keepalive: true});
+    if (r.status === 409) {   // the game box is further ahead than this phone: switch to its progress
+      const newer = await r.text();
+      if (newer.trim()) {
+        try { localStorage.setItem(LS_KEY + "_backup", txt); } catch (e) {}
+        store.set(newer);
+        syncMsg("Your game box has more progress - loading it...");
+        setTimeout(() => location.reload(), 1200);
+        sending = false;
+        return;
+      }
+    }
     syncMsg("Saved on your phone ✓ and synced with your game ♥");
-    if (!r.ok && r.status !== 409) throw 0;   // 409 = the game box has an even newer save
+    if (!r.ok && r.status !== 409) throw 0;
     sending = false;
     if (pending !== null) flush();   // another save came in while this one was sending
     return;
@@ -169,7 +180,7 @@ async function boot() {
     step("Loading graphics...", 40);
     await py.loadPackage(["numpy", "pillow"]);
     step("Loading the game...", 65);
-    const src = await (await fetch("game.py")).text();
+    const src = await (await fetch("game.py", {cache: "no-store"})).text();
     py.FS.mkdirTree("/home/pyodide");
     py.FS.writeFile("/home/pyodide/game.py", src);
     py.FS.mkdirTree("/usr/share/fonts/truetype/dejavu");
