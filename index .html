@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Circuit Game">
+<meta name="theme-color" content="#2a1530">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Jaslyne's Circuit Game</title>
+<style>
+  :root { --bg:#2a1530; --panel:#3b1f45; --pink:#ff7eb6; --pink2:#ffb3d4; --text:#fff3f8; --dim:#c9a7c0; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overscroll-behavior:none; }
+  body { display:flex; flex-direction:column; align-items:center; padding:12px 16px 20px;
+    user-select:none; -webkit-user-select:none; touch-action:none; }
+  h1 { font-size:18px; margin:4px 0 10px; letter-spacing:.5px; color:var(--pink2); }
+  .wrap { width:100%; max-width:960px; display:flex; flex-direction:column; align-items:center; gap:14px; }
+  .screen { width:100%; max-width:640px; aspect-ratio:4/3; background:#000; border-radius:14px;
+    border:4px solid var(--pink); box-shadow:0 8px 24px rgba(0,0,0,.4); overflow:hidden; position:relative; }
+  canvas { width:100%; height:100%; display:block; image-rendering:pixelated; image-rendering:crisp-edges; }
+  .status { position:absolute; inset:0; display:flex; flex-direction:column; gap:10px; align-items:center;
+    justify-content:center; text-align:center; padding:20px; font-size:15px; color:var(--dim); background:#140a18; }
+  .status[hidden] { display:none; }
+  .bar { width:70%; height:8px; border-radius:4px; background:#3b1f45; overflow:hidden; }
+  .bar i { display:block; height:100%; width:0; background:var(--pink); transition:width .3s; }
+  .sync { font-size:12px; color:var(--dim); min-height:16px; text-align:center; }
+  .pad { width:100%; max-width:420px; display:flex; justify-content:space-between; align-items:center; gap:16px; }
+  .dpad { display:grid; grid-template-columns:repeat(3,64px); grid-template-rows:repeat(3,64px); gap:6px; }
+  button { font:inherit; color:var(--text); background:var(--panel); border:3px solid var(--pink);
+    border-radius:14px; font-size:24px; touch-action:none; cursor:pointer; }
+  button.on { background:var(--pink); color:var(--bg); }
+  .up { grid-column:2; grid-row:1; } .left { grid-column:1; grid-row:2; }
+  .right { grid-column:3; grid-row:2; } .down { grid-column:2; grid-row:3; }
+  .center { width:104px; height:104px; border-radius:50%; font-size:16px; font-weight:700; letter-spacing:1px; }
+  @media (orientation:landscape) and (max-height:520px) {
+    body { padding:8px 16px; } h1, .sync { display:none; }
+    .wrap { flex-direction:row; justify-content:center; align-items:center; height:100%; }
+    .screen { height:calc(100vh - 24px); width:auto; max-width:none; }
+    .pad { flex-direction:column; width:auto; }
+  }
+</style></head>
+<body>
+<h1>Jaslyne's Circuit Game</h1>
+<div class="wrap">
+  <div class="screen"><canvas id="c" width="320" height="240"></canvas>
+    <div class="status" id="status"><div id="msg">Loading the game...</div><div class="bar"><i id="bar"></i></div></div></div>
+  <div class="sync" id="sync"></div>
+  <div class="pad">
+    <div class="dpad">
+      <button class="up" data-b="up" aria-label="up">&#9650;</button>
+      <button class="left" data-b="left" aria-label="left">&#9664;</button>
+      <button class="right" data-b="right" aria-label="right">&#9654;</button>
+      <button class="down" data-b="down" aria-label="down">&#9660;</button>
+    </div>
+    <button class="center" data-b="click">OK</button>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script>
+// Where the game box (the Pi) lives. Her save is kept on this phone AND synced with the Pi whenever it's on.
+const PI = new URLSearchParams(location.search).get("pi") || "https://j.tail9f00d0.ts.net";
+const FONTS = "https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/";
+const LS_KEY = "gio_save";
+
+const $ = id => document.getElementById(id);
+const step = (txt, pct) => { $("msg").textContent = txt; $("bar").style.width = pct + "%"; };
+const syncMsg = t => { $("sync").textContent = t; };
+const savedAt = t => { try { return JSON.parse(t).saved_at || 0; } catch (e) { return -1; } };
+const store = {
+  get() { try { return localStorage.getItem(LS_KEY); } catch (e) { return null; } },
+  set(t) { try { localStorage.setItem(LS_KEY, t); return true; } catch (e) { return false; } },
+};
+let py = null, api = null;
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+async function piSave() {   // the Pi's save, or null if the Pi is off / unreachable
+  try {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 4000);
+    const r = await fetch(PI + "/save", {cache: "no-store", signal: ctl.signal});
+    clearTimeout(t);
+    if (!r.ok) return null;
+    const txt = await r.text();
+    return txt.trim() ? txt : "";
+  } catch (e) { return null; }
+}
+
+// every save goes onto the phone first, then to the Pi if it's on
+let pending = null, sending = false;
+window.gioSave = txt => { store.set(txt); pending = txt; flush(); };
+async function flush() {
+  if (sending || pending === null) return;
+  sending = true;
+  const txt = pending; pending = null;
+  try {
+    const r = await fetch(PI + "/save", {method: "POST", body: txt, headers: {"Content-Type": "text/plain"}, keepalive: true});
+    syncMsg("Saved on your phone ✓ and synced with your game ♥");
+    if (!r.ok && r.status !== 409) throw 0;   // 409 = the game box has an even newer save
+    sending = false;
+    if (pending !== null) flush();   // another save came in while this one was sending
+    return;
+  } catch (e) {
+    pending = pending ?? txt;
+    syncMsg("Saved on your phone ✓ (your game box is off - it'll sync next time)");
+  }
+  sending = false;
+}
+setInterval(flush, 30000);   // keep trying to sync anything that didn't make it
+
+const BOOT = `
+import os, sys, time, json
+os.environ["GIO_SIM"] = "1"
+sys.path.insert(0, "/home/pyodide")
+import game, js
+HELD = game.SIM_KEYS
+_write = game.write_progress
+def _save_and_sync(s):
+    _write(s)
+    try:
+        with open(game.PROGRESS_FILE) as f:
+            js.gioSave(f.read())
+    except OSError:
+        pass
+game.write_progress = _save_and_sync
+
+class PhoneAudio(game.Audio):   # the game's own music + sound mixer, played by the phone's browser
+    def __init__(self):
+        game.Audio.__init__(self, False)
+    def load(self):
+        self.sounds, self.tracks = game.build_sfx(), game.build_music()
+        self.ok = True
+AUD = PhoneAudio()
+game.AUDIO = AUD
+def audio_load():
+    AUD.load()
+def audio_chunk(n):
+    return AUD.mix(n) if AUD.ok else bytes(2 * n)
+g = game.Game()
+_last = [time.time()]
+def frame():
+    now = time.time()
+    dt = min(0.1, now - _last[0])
+    _last[0] = now
+    g.update(now, dt)
+    return g.render(now).convert("RGBA").tobytes()
+def press(b):
+    g.on_press(b, time.time())
+def hold(b, on):
+    (HELD.add if on else HELD.discard)(b)
+def save_now():
+    if g.mode != "title":
+        g.save()
+`;
+
+async function boot() {
+  try {
+    step("Loading the game engine (the first time takes a bit)...", 10);
+    py = await loadPyodide();
+    step("Loading graphics...", 40);
+    await py.loadPackage(["numpy", "pillow"]);
+    step("Loading the game...", 65);
+    const src = await (await fetch("game.py")).text();
+    py.FS.mkdirTree("/home/pyodide");
+    py.FS.writeFile("/home/pyodide/game.py", src);
+    py.FS.mkdirTree("/usr/share/fonts/truetype/dejavu");
+    for (const f of ["DejaVuSans.ttf", "DejaVuSans-Bold.ttf"]) {
+      try {
+        const r = await fetch(FONTS + f);
+        if (r.ok) py.FS.writeFile("/usr/share/fonts/truetype/dejavu/" + f, new Uint8Array(await r.arrayBuffer()));
+      } catch (e) {}
+    }
+    step("Getting your progress...", 85);
+    const local = store.get(), remote = await piSave();
+    let save = local;
+    if (remote && (!local || savedAt(remote) >= savedAt(local))) save = remote;   // newest save wins
+    py.FS.mkdirTree("/home/jasyne/circuits");
+    if (save) { py.FS.writeFile("/home/jasyne/circuits/progress.json", save); store.set(save); }
+    if (local && remote !== null && local === save && savedAt(local) > savedAt(remote || "{}")) {
+      pending = local; flush();   // she played on the phone while the game box was off: send it now
+    }
+    await py.runPythonAsync(BOOT);
+    api = {frame: py.globals.get("frame"), press: py.globals.get("press"), hold: py.globals.get("hold"),
+           save: py.globals.get("save_now"), chunk: py.globals.get("audio_chunk"), aload: py.globals.get("audio_load")};
+    $("status").hidden = true;
+    syncMsg(remote === null ? "Playing on your phone - your game box is off, progress syncs next time it's on"
+                            : "Your Bolts and progress are linked to your game ♥");
+    run();
+    setTimeout(() => { try { api.aload(); audioReady = true; } catch (e) {} }, 300);
+  } catch (e) {
+    step("Couldn't start the game. The very first time needs internet. (" + e + ")", 100);
+  }
+}
+
+const ctx = $("c").getContext("2d"), img = ctx.createImageData(320, 240);
+function run() {
+  let next = performance.now();
+  const tick = () => {
+    const t = performance.now();
+    if (t >= next) {
+      next = t + 50;   // 20 frames a second, same as the real game
+      const px = api.frame();
+      img.data.set(px.toJs());
+      px.destroy();
+      ctx.putImageData(img, 0, 0);
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+// ---- sound: ask the game for small chunks of mixed audio and queue them back to back
+const RATE = 22050, CHUNK = 1024;
+let actx = null, playAt = 0, audioReady = false;
+function startAudio() {
+  if (!actx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    actx = new AC();
+    setInterval(pumpAudio, 30);
+  }
+  if (actx.state === "suspended") actx.resume();
+}
+function pumpAudio() {
+  if (!api || !audioReady || !actx || actx.state !== "running") return;
+  if (playAt < actx.currentTime + 0.02) playAt = actx.currentTime + 0.05;
+  while (playAt < actx.currentTime + 0.15) {
+    const raw = api.chunk(CHUNK), bytes = raw.toJs(); raw.destroy();
+    const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 1);
+    const buf = actx.createBuffer(1, pcm.length, RATE), out = buf.getChannelData(0);
+    for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] / 32768;
+    const src = actx.createBufferSource();
+    src.buffer = buf; src.connect(actx.destination); src.start(playAt);
+    playAt += pcm.length / RATE;
+  }
+}
+addEventListener("pointerdown", startAudio, {capture: true});
+addEventListener("keydown", startAudio, {capture: true});
+
+const down = new Set();
+function press(b, el) { if (!api || down.has(b)) return; down.add(b); el && el.classList.add("on"); api.hold(b, true); api.press(b); }
+function release(b, el) { if (!down.has(b)) return; down.delete(b); el && el.classList.remove("on"); api && api.hold(b, false); }
+document.querySelectorAll("button[data-b]").forEach(el => {
+  const b = el.dataset.b;
+  el.addEventListener("pointerdown", e => { e.preventDefault(); el.setPointerCapture(e.pointerId); press(b, el); });
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach(t => el.addEventListener(t, () => release(b, el)));
+  el.addEventListener("contextmenu", e => e.preventDefault());
+});
+const KEYS = {ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", Enter: "click", " ": "click"};
+const btn = b => document.querySelector('[data-b="' + b + '"]');
+addEventListener("keydown", e => { const b = KEYS[e.key]; if (b) { e.preventDefault(); if (!e.repeat) press(b, btn(b)); } });
+addEventListener("keyup", e => { const b = KEYS[e.key]; if (b) release(b, btn(b)); });
+const releaseAll = () => [...down].forEach(b => release(b, btn(b)));
+addEventListener("blur", releaseAll);
+document.addEventListener("visibilitychange", () => {   // leaving the page = save (phone + game box)
+  if (document.hidden) { releaseAll(); if (api) { api.save(); flush(); } if (actx) actx.suspend(); }
+  else if (actx) actx.resume();
+});
+addEventListener("pagehide", () => { if (api) { api.save(); flush(); } });
+boot();
+</script>
+</body></html>
