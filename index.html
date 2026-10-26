@@ -68,11 +68,14 @@ const LS_KEY = "gio_save";
 const $ = id => document.getElementById(id);
 const step = (txt, pct) => { $("msg").textContent = txt; $("bar").style.width = pct + "%"; };
 const syncMsg = t => { $("sync").textContent = t; };
-// which save is further ahead: story quests, then jobs, then Bolts ever earned, then play time, then newest
-// (same rule as the game box, so they always agree)
+// which save is further ahead: the newer playthrough (a NEW GAME wins), then story quests, then jobs,
+// then Bolts ever earned, then play time, then newest. Same rule as the game box, so they always agree.
 const rank = t => { try { const d = JSON.parse(t);
-  return [(d.done || []).length, d.quests_done || 0, d.earned || 0, d.play || 0, d.saved_at || 0]; }
-  catch (e) { return [-1, -1, -1, -1, -1]; } };
+  return [d.started_at || 0, (d.done || []).length, d.quests_done || 0, d.earned || 0, d.play || 0, d.saved_at || 0]; }
+  catch (e) { return [-1, -1, -1, -1, -1, -1]; } };
+const strictlyAhead = (a, b) => { const x = rank(a), y = rank(b);
+  for (let i = 0; i < x.length - 1; i++) if (x[i] !== y[i]) return x[i] > y[i];   // ignore save time here
+  return false; };
 const ahead = (a, b) => { const x = rank(a), y = rank(b);
   for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] > y[i];
   return true; };
@@ -127,6 +130,17 @@ async function flush() {
   sending = false;
 }
 setInterval(flush, 30000);   // keep trying to sync anything that didn't make it
+// while the game is open, peek at the game box now and then: if she played there (or started a NEW GAME), switch over
+setInterval(async () => {
+  if (!api || document.hidden || sending || pending !== null) return;
+  const remote = await piSave(), local = store.get();
+  if (remote && local && strictlyAhead(remote, local)) {
+    try { localStorage.setItem(LS_KEY + "_backup", local); } catch (e) {}
+    store.set(remote);
+    syncMsg("Your game box has newer progress - loading it...");
+    setTimeout(() => location.reload(), 1200);
+  }
+}, 20000);
 
 const BOOT = `
 import os, sys, time, json
