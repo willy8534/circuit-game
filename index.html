@@ -68,9 +68,14 @@ const LS_KEY = "gio_save";
 const $ = id => document.getElementById(id);
 const step = (txt, pct) => { $("msg").textContent = txt; $("bar").style.width = pct + "%"; };
 const syncMsg = t => { $("sync").textContent = t; };
-// which save is "ahead": the one with more play time (where she actually played), then the newest
-const rank = t => { try { const d = JSON.parse(t); return [d.play || 0, d.saved_at || 0]; } catch (e) { return [-1, -1]; } };
-const ahead = (a, b) => { const x = rank(a), y = rank(b); return x[0] !== y[0] ? x[0] > y[0] : x[1] >= y[1]; };
+// which save is further ahead: story quests, then jobs, then Bolts ever earned, then play time, then newest
+// (same rule as the game box, so they always agree)
+const rank = t => { try { const d = JSON.parse(t);
+  return [(d.done || []).length, d.quests_done || 0, d.earned || 0, d.play || 0, d.saved_at || 0]; }
+  catch (e) { return [-1, -1, -1, -1, -1]; } };
+const ahead = (a, b) => { const x = rank(a), y = rank(b);
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  return true; };
 const store = {
   get() { try { return localStorage.getItem(LS_KEY); } catch (e) { return null; } },
   set(t) { try { localStorage.setItem(LS_KEY, t); return true; } catch (e) { return false; } },
@@ -179,6 +184,7 @@ async function boot() {
     let save = local;
     if (remote && (!local || ahead(remote, local))) save = remote;   // the save she's played more on wins
     py.FS.mkdirTree("/home/jasyne/circuits");
+    if (local && save !== local) { try { localStorage.setItem(LS_KEY + "_backup", local); } catch (e) {} }   // never lose the phone copy
     if (save) { py.FS.writeFile("/home/jasyne/circuits/progress.json", save); store.set(save); }
     if (local && remote !== null && local === save && (!remote || !ahead(remote, local))) {
       pending = local; flush();   // she played on the phone while the game box was off: send it now
