@@ -617,6 +617,12 @@ loop();
 """
 
 
+def save_rank(d):
+    """How far along a save is - used to pick between the phone's save and the Pi's."""
+    return (len(d.get("done", [])), int(d.get("quests_done", 0) or 0), int(d.get("earned", 0) or 0),
+            float(d.get("play", 0) or 0), float(d.get("saved_at", 0) or 0))
+
+
 def web_held(name):
     with _web["lock"]:
         t = _web["held"].get(name)
@@ -689,10 +695,10 @@ def web_start():
                     try:
                         with open(PROGRESS_FILE) as f:
                             cur = f.read()
-                        # keep whichever save has MORE play time (= where she actually played); ties go to the newest.
-                        # Going by time alone lost progress: a fresh, empty save made on the Pi looked "newer".
-                        old = json.loads(cur)
-                        if (float(old.get("play", 0)), float(old.get("saved_at", 0))) >                                 (float(incoming.get("play", 0)), float(incoming.get("saved_at", 0))):
+                        # keep whichever save is further ahead: story quests, then jobs, then Bolts ever earned,
+                        # then play time, then newest. (Time alone lost progress: an empty Pi save looked "newer",
+                        # and play time alone grows while the Pi just sits switched on.)
+                        if save_rank(json.loads(cur)) > save_rank(incoming):
                             self._send(409, cur.encode("utf-8"), "application/json")
                             return
                     except (OSError, ValueError):
